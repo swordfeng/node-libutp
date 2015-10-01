@@ -6,9 +6,11 @@
 				'libutp',
 			],
 			'include_dirs': [
-				'libutp/',
+				'deps/libutp',
+				'<!(node -e "require(\'nan\')")',
 			],
 			"sources": [
+				'src/utp_context.cc'
 			],
 			'conditions': [
 				['OS=="win"', {
@@ -27,17 +29,16 @@
 			'target_name': 'libutp',
 			'type': 'static_library',
 			'defines': [
-			    'POSIX',
 			    '_DEBUG',
 			    'UTP_DEBUG_LOGGING'
 			],
 			'sources': [
-				'libutp/utp_callbacks.cpp',
-				'libutp/utp_internal.cpp',
-				'libutp/utp_utils.cpp',
-				'libutp/utp_api.cpp',
-				'libutp/utp_hash.cpp',
-				'libutp/utp_packedsockaddr.cpp'
+				'deps/libutp/utp_callbacks.cpp',
+				'deps/libutp/utp_internal.cpp',
+				'deps/libutp/utp_utils.cpp',
+				'deps/libutp/utp_api.cpp',
+				'deps/libutp/utp_hash.cpp',
+				'deps/libutp/utp_packedsockaddr.cpp'
 			],
 			'conditions': [
 				['OS=="linux" or OS=="android"', {
@@ -49,6 +50,9 @@
 						'-Wno-sign-compare',
 						'-fpermissive'
 					],
+					'defines' :[
+						'POSIX',
+					]
 				}],
 				['OS=="win"', {
 					'defines': [
