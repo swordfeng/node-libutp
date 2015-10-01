@@ -42,22 +42,23 @@ private:
 	bool onFirewall();
 	void onAccept(utp_socket *sock);
 
-	static uint64 onCallback(utp_callback_arguments *a);
+	uint64 onCallback(utp_callback_arguments *a);
 
 	static NAN_METHOD(Init);
 	static NAN_METHOD(New);
 	static NAN_METHOD(Bind);
-	//NAN_METHOD(Listen);
-	//NAN_METHOD(Connect);
-	//NAN_METHOD(Close);
-	//NAN_METHOD(nRef);
-	//NAN_METHOD(nUnref);
+	static NAN_METHOD(Listen);
+	static NAN_METHOD(Connect);
+	//static NAN_METHOD(Close);
+	//static NAN_METHOD(uvRef);
+	//static NAN_METHOD(uvUnref);
 public:
 	UTPContext();
 	~UTPContext();
 	int bind(uint16_t port, string host);
-	int listen(int _backlog);
-	utp_socket *connect();
+	void listen(int _backlog);
+	utp_socket *connect(uint16_t port, string host);
+    void stop();
 	void close();
 };
 

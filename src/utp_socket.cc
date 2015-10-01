@@ -25,8 +25,9 @@ NAN_METHOD(UTPSocket::New) {
 }
 
 UTPSocket *UTPSocket::create(UTPContext *utpctx, utp_socket *sock) {
+	Nan::HandleScope scope;
 	v8::Local<v8::Object> sockObj = UTPSocket::NewInstance(0);
-	UTPSocket *utpsock(utpctx, sock, sockObj);
+	new UTPSocket(utpctx, sock, sockObj);
 	return utpsock;
 }
 

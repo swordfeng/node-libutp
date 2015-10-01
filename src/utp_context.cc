@@ -9,8 +9,20 @@ UTPContext::UTPContext(): ctx(utp_init(2), utp_destroy) {
 	timerHandle.data = this;
 
 	for (int type: vector<int>({UTP_SENDTO, UTP_ON_ERROR, UTP_ON_STATE_CHANGE, UTP_ON_READ, UTP_ON_FIREWALL, UTP_ON_ACCEPT})) {
-		utp_set_callback(ctx.get(), type, &onCallback);
+		utp_set_callback(ctx.get(), type, [] (utp_callback_arguments *a) {
+			UTPContext *utpctx = static_cast<UTPContext *>(utp_context_get_userdata(a->context));
+			return utpctx->onCallback(a);
+		});
 	}
+}
+
+UTPContext::~UTPContext() {
+	if (state == STATE_BOUND || state == STATE_STOPPED) {
+		assert(uv_timer_stop(&timerHandle) >= 0);
+		assert(uv_udp_recv_stop(&udpHandle) >= 0);
+	}
+	uv_close(reinterpret_cast<uv_handle_t *>(&udpHandle), nullptr);
+	uv_close(reinterpret_cast<uv_handle_t *>(&timerHandle), nullptr);
 }
 
 int UTPContext::bind(uint16_t port, string host) {
@@ -39,38 +51,42 @@ int UTPContext::bind(uint16_t port, string host) {
 		UTPContext *ctx = static_cast<UTPContext *>(handle->data);
 		utp_check_timeouts(ctx->ctx.get());
 	}), 0, 500) >= 0);
+	Ref();
 	state = STATE_BOUND;
 	return 0;
 };
 
-UTPContext::~UTPContext() {
-	if (state == STATE_BOUND || state == STATE_STOPPED) {
-		assert(uv_timer_stop(&timerHandle) >= 0);
-		assert(uv_udp_recv_stop(&udpHandle) >= 0);
-	}
-	uv_close(reinterpret_cast<uv_handle_t *>(&udpHandle), nullptr);
-	uv_close(reinterpret_cast<uv_handle_t *>(&timerHandle), nullptr);
+
+UTPSocket *UTPContext::connect(uint16_t port, string host) {
+	if (state != STATE_BOUND) return nullptr;
+	return UTPSocket::create(this, utp_create_socket(ctx.get()));
 }
 
-int UTPContext::listen(int _backlog) {
-	if (state != STATE_BOUND) return -1;
+void UTPContext::listen(int _backlog) {
+	if (state != STATE_BOUND) return;
 	backlog = _backlog;
 	if (backlog < 0) backlog = 0;
 	listening = true;
-	return 0;
+	return;
+}
+
+void UTPContext::stop() {
+	listening = false;
+	state = STATE_STOPPED;
+	if (connections == 0 && state == STATE_STOPPED) Unref();
+	return;
 }
 
 uint64 UTPContext::onCallback(utp_callback_arguments *a) {
-	UTPContext *utpctx = static_cast<UTPContext *>(utp_context_get_userdata(a->context));
 	UTPSocket *utpsock;
 	switch (a->callback_type) {
 	case UTP_SENDTO:
-		return utpctx->sendTo(a->buf, a->len, a->address, a->address_len);
+		return sendTo(a->buf, a->len, a->address, a->address_len);
 	case UTP_ON_FIREWALL:
-		return static_cast<uint64>(utpctx->onFirewall());
+		return static_cast<uint64>(onFirewall());
 	case UTP_ON_ACCEPT:
-		utpctx->connections++;
-		utpctx->onAccept(a->socket);
+		connections++;
+		onAccept(a->socket);
 		return 0;
 
 	case UTP_ON_READ:
@@ -91,7 +107,8 @@ uint64 UTPContext::onCallback(utp_callback_arguments *a) {
 			return 0;
 		case UTP_STATE_DESTROYING:
 			utpsock->onDestroy();
-			utpctx->connections--;
+			connections--;
+			if (connections == 0 && state == STATE_STOPPED) Unref();
 			return 0;
 		}
 		return 0;
@@ -154,18 +171,44 @@ NAN_METHOD(UTPContext::New) {
 NAN_METHOD(UTPContext::Bind) {
 	Nan::HandleScope scope;
 	v8::Isolate *isolate = info.GetIsolate();
-	UTPContext *utpctx = Nan::ObjectWrap::Unwrap<UTPContext>(info.This());
-	v8::Local<v8::Uint32> port = info[0].As<v8::Uint32>();
+	UTPContext *utpctx = Nan::ObjectWrap::Unwrap<UTPContext>(info.Holder());
+	int port = info[0].As<v8::Uint32>()->Value();
 	string host(*Nan::Utf8String(info[1]));
 	if (utpctx->state != STATE_INIT) {
-		info.GetReturnValue().Set(v8::Boolean::New(isolate, false));
+		Nan::ThrowError("socket has already been bound");
 		return;
 	}
-	int result = utpctx->bind(static_cast<uint16_t>(port->Value()), host);
+	int result = utpctx->bind(static_cast<uint16_t>(port), host);
 	if (result == 0) {
 		info.GetReturnValue().Set(v8::Boolean::New(isolate, true));
 	}
 	v8::Local<v8::Value> err = Nan::Error(uv_strerror(result));
 	err.As<v8::Object>()->Set(Nan::New("code").ToLocalChecked(), Nan::New(uv_err_name(result)).ToLocalChecked());
 	Nan::ThrowError(err);
+}
+
+NAN_METHOD(UTPContext::Listen) {
+	Nan::HandleScope scope;
+	v8::Isolate *isolate = info.GetIsolate();
+	UTPContext *utpctx = Nan::ObjectWrap::Unwrap<UTPContext>(info.Holder());
+	int backlog = info[0].As<v8::Int32>()->Value();
+	utpctx->listen(backlog);
+}
+
+NAN_METHOD(UTPContext::Connect) {
+	Nan::HandleScope scope;
+	v8::Isolate *isolate = info.GetIsolate();
+	UTPContext *utpctx = Nan::ObjectWrap::Unwrap<UTPContext>(info.Holder());
+	int port = info[0].As<v8::Uint32>()->Value();
+	string host(*Nan::Utf8String(info[1]));
+	if (utpctx->state != STATE_INIT) {
+		Nan::ThrowError("invalid socket state");
+		return;
+	}
+	UTPSocket *utpsock = utpctx->connect(static_cast<uint16_t>(port), host);
+	if (!utpsock) {
+		Nan::ThrowError("fail to connect");
+		return;
+	}
+	info.GetReturnValue().Set(utpsock->handle());
 }
