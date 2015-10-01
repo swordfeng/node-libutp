@@ -84,7 +84,7 @@ public:
 	static UTPSocket *get(utp_socket *sock) {
 		return static_cast<UTPSocket *>(utp_get_userdata(sock));
 	}
-	static UTPSocket *get(v8::Local<v8::Value> obj) {
+	static UTPSocket *get(v8::Local<v8::Object> obj) {
 		return ObjectWrap::Unwrap<UTPSocket>(obj);
 	}
 	static UTPSocket *create(UTPContext *utpctx, utp_socket *sock);

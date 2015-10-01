@@ -130,7 +130,7 @@ bool UTPContext::onFirewall() {
 void UTPContext::onAccept(utp_socket *sock) {
 	Nan::HandleScope scope;
 	v8::Local<v8::Object> connObj = UTPSocket::create(this, sock)->handle();
-	v8::Local<v8::Function> onConn = Nan::Get(handle(), Nan::New<v8::String>("_onConnect").ToLocalChecked()).ToLocalChecked().As<v8::Function>();
+	v8::Local<v8::Function> onConn = Nan::Get(handle(), Nan::New("_onConnect").ToLocalChecked()).ToLocalChecked().As<v8::Function>();
 	v8::Local<v8::Value> argv[1] = {connObj};
 	Nan::Callback(onConn).Call(1, argv);
 }
@@ -139,7 +139,7 @@ void UTPContext::onAccept(utp_socket *sock) {
 NAN_METHOD(UTPContext::Init) {
 	Nan::HandleScope scope;
 
-	v8::Local<v8::FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>(isolate, New);
+	v8::Local<v8::FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>(New);
 	tpl->SetClassName(Nan::New("UTPContext").ToLocalChecked());
 	tpl->InstanceTemplate()->SetInternalFieldCount(1);
 
@@ -148,7 +148,6 @@ NAN_METHOD(UTPContext::Init) {
 
 NAN_METHOD(UTPContext::New) {
 	Nan::HandleScope scope;
-	v8::Isolate *isolate = info.GetIsolate();
 	info.GetReturnValue().Set(info.This());
 }
 
@@ -156,17 +155,17 @@ NAN_METHOD(UTPContext::Bind) {
 	Nan::HandleScope scope;
 	v8::Isolate *isolate = info.GetIsolate();
 	UTPContext *utpctx = Nan::ObjectWrap::Unwrap<UTPContext>(info.This());
-	Nan::MaybeLocal<v8::UInt32> port = info[0];
-	string host = Nan::Utf8String(info[1])();
+	v8::Local<v8::Uint32> port = info[0].As<v8::Uint32>();
+	string host(*Nan::Utf8String(info[1]));
 	if (utpctx->state != STATE_INIT) {
 		info.GetReturnValue().Set(v8::Boolean::New(isolate, false));
 		return;
 	}
 	int result = utpctx->bind(static_cast<uint16_t>(port->Value()), host);
-	if (result == 0) {}
+	if (result == 0) {
 		info.GetReturnValue().Set(v8::Boolean::New(isolate, true));
 	}
-	v8::Local<v8::Error> err = Nan::Error(uv_strerror(result));
-	err->Set(Nan::New("code"), Nan::New(uv_err_name(result)));
+	v8::Local<v8::Value> err = Nan::Error(uv_strerror(result));
+	err.As<v8::Object>()->Set(Nan::New("code").ToLocalChecked(), Nan::New(uv_err_name(result)).ToLocalChecked());
 	Nan::ThrowError(err);
 }
