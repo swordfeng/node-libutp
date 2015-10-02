@@ -11,7 +11,12 @@
 			],
 			"sources": [
 				'src/utp_context.cc',
-				'src/utp_socket.cc'
+				'src/utp_socket.cc',
+				'src/utp.cc'
+			],
+			'defines':[
+				'_DEBUG',
+				'UTP_DEBUG_LOGGING'
 			],
 			'conditions': [
 				['OS=="win"', {
@@ -20,6 +25,11 @@
 				}, { # OS!="win"
 					'cflags': [
 						'-std=c++14',
+						'-fno-exceptions',
+						'-g'
+					],
+					'defines':[
+						'POSIX'
 					],
 					'libraries': [
 					],
@@ -49,7 +59,8 @@
 						'-fPIC',
 						'-fno-rtti',
 						'-Wno-sign-compare',
-						'-fpermissive'
+						'-fpermissive',
+						'-g'
 					],
 					'defines' :[
 						'POSIX',

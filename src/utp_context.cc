@@ -1,6 +1,23 @@
 #include "utp.h"
 
-UTPContext::UTPContext(): ctx(utp_init(2), utp_destroy) {
+namespace nodeUTP {
+
+const char *UTPContext::statestr[] = {"STATE_INIT", "STATE_BOUND", "STATE_STOPPED"};
+Nan::Persistent<v8::Function> UTPContext::constructor;
+
+UTPContext::UTPContext():
+ctx(utp_init(2), [] (utp_context *ctx) { if (ctx) utp_destroy(ctx); }),
+state(STATE_INIT),
+listening(false),
+backlog(0),
+connections(0)
+{
+#ifdef _DEBUG
+	utp_context_set_option(ctx.get(), UTP_LOG_NORMAL, 1);
+	utp_context_set_option(ctx.get(), UTP_LOG_MTU,    1);
+	utp_context_set_option(ctx.get(), UTP_LOG_DEBUG,  1);
+#endif
+
 	assert(uv_udp_init(uv_default_loop(), &udpHandle) >= 0);
 	assert(uv_timer_init(uv_default_loop(), &timerHandle) >= 0);
 
@@ -17,16 +34,11 @@ UTPContext::UTPContext(): ctx(utp_init(2), utp_destroy) {
 }
 
 UTPContext::~UTPContext() {
-	if (state == STATE_BOUND || state == STATE_STOPPED) {
-		assert(uv_timer_stop(&timerHandle) >= 0);
-		assert(uv_udp_recv_stop(&udpHandle) >= 0);
-	}
-	uv_close(reinterpret_cast<uv_handle_t *>(&udpHandle), nullptr);
-	uv_close(reinterpret_cast<uv_handle_t *>(&timerHandle), nullptr);
 }
 
+/* return libuv errro code */
 int UTPContext::bind(uint16_t port, string host) {
-	if (state != STATE_INIT) return 0;
+	assert(state == STATE_INIT);
 	union {
 		struct sockaddr saddr;
 		struct sockaddr_in sin;
@@ -39,42 +51,76 @@ int UTPContext::bind(uint16_t port, string host) {
 	if (errcode < 0) return errcode;
 	assert(uv_udp_recv_start(&udpHandle, static_cast<void (*)(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf)> (
 		[] (uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
-		    buf->base = static_cast<char *>(malloc(suggested_size));
+		    buf->base = new (nothrow) char[suggested_size];
+			assert(buf->base);
 		    buf->len = suggested_size;
 		}
 	), [] (uv_udp_t *handle, ssize_t nread, const uv_buf_t *buf, const struct sockaddr *addr, unsigned flags) {
-			static_cast<UTPContext *>(handle->data)->uvRecv(nread, buf->base, addr, flags);
-			free(buf->base);
-		}
-	) == 0);
+		UTPContext *utpctx = static_cast<UTPContext *>(handle->data);
+		if (!utpctx->ctx.get()) return;
+		utpctx->uvRecv(nread, buf->base, addr, flags);
+		delete[] buf->base;
+		utp_check_timeouts(utpctx->ctx.get());
+	}) == 0);
 	assert(uv_timer_start(&timerHandle, static_cast<void (*)(uv_timer_t *handle)> ([] (uv_timer_t *handle) -> void {
-		UTPContext *ctx = static_cast<UTPContext *>(handle->data);
-		utp_check_timeouts(ctx->ctx.get());
+		UTPContext *utpctx = static_cast<UTPContext *>(handle->data);
+		if (!utpctx->ctx.get()) return;
+		utp_check_timeouts(utpctx->ctx.get());
 	}), 0, 500) >= 0);
+	uv_unref(reinterpret_cast<uv_handle_t *>(&udpHandle));
+	uv_unref(reinterpret_cast<uv_handle_t *>(&timerHandle));
 	Ref();
 	state = STATE_BOUND;
 	return 0;
 };
 
-
-UTPSocket *UTPContext::connect(uint16_t port, string host) {
-	if (state != STATE_BOUND) return nullptr;
-	return UTPSocket::create(this, utp_create_socket(ctx.get()));
+int UTPContext::connect(uint16_t port, string host, UTPSocket **putpsock) {
+	assert(state == STATE_BOUND);
+	utp_socket *sock = nullptr;
+	union {
+		struct sockaddr saddr;
+		struct sockaddr_in sin;
+		struct sockaddr_in6 sin6;
+	} addr;
+	int errcode = 0;
+	if (uv_ip4_addr(host.c_str(), port, &addr.sin) >= 0) {
+		sock = utp_create_socket(ctx.get());
+		utp_connect(sock, &addr.saddr, sizeof(struct sockaddr_in));
+	} else if ((errcode = uv_ip6_addr(host.c_str(), port, &addr.sin6)) >= 0) {
+		sock = utp_create_socket(ctx.get());
+		utp_connect(sock, &addr.saddr, sizeof(struct sockaddr_in6));
+	} else {
+		return errcode;
+	}
+	connections++;
+	*putpsock = new UTPSocket(this, sock);
+	return 0;
 }
 
 void UTPContext::listen(int _backlog) {
 	if (state != STATE_BOUND) return;
 	backlog = _backlog;
 	if (backlog < 0) backlog = 0;
+	uv_ref(reinterpret_cast<uv_handle_t *>(&udpHandle));
+	uv_ref(reinterpret_cast<uv_handle_t *>(&timerHandle));
 	listening = true;
 	return;
 }
 
-void UTPContext::stop() {
+void UTPContext::destroy() {
 	listening = false;
+	uv_unref(reinterpret_cast<uv_handle_t *>(&udpHandle));
+	uv_unref(reinterpret_cast<uv_handle_t *>(&timerHandle));
 	state = STATE_STOPPED;
-	if (connections == 0 && state == STATE_STOPPED) Unref();
-	return;
+	if (connections == 0 && state == STATE_STOPPED) {
+		Unref();
+		MakeWeak();
+		assert(uv_timer_stop(&timerHandle) >= 0);
+		assert(uv_udp_recv_stop(&udpHandle) >= 0);
+		uv_close(reinterpret_cast<uv_handle_t *>(&udpHandle), nullptr);
+		uv_close(reinterpret_cast<uv_handle_t *>(&timerHandle), nullptr);
+		//ctx.reset(nullptr); // bug: will check timeout after releasing the object (why?)
+	}
 }
 
 uint64 UTPContext::onCallback(utp_callback_arguments *a) {
@@ -108,7 +154,7 @@ uint64 UTPContext::onCallback(utp_callback_arguments *a) {
 		case UTP_STATE_DESTROYING:
 			utpsock->onDestroy();
 			connections--;
-			if (connections == 0 && state == STATE_STOPPED) Unref();
+			if (state == STATE_STOPPED) destroy();
 			return 0;
 		}
 		return 0;
@@ -124,10 +170,12 @@ void UTPContext::uvRecv(ssize_t len, const void *buf, const struct sockaddr *add
 	assert(len >= 0);
 	if (!len && !addr) {
 		// no more data
-	} else if (!utp_process_udp(ctx.get(), static_cast<const byte *>(buf), len, addr, addr->sa_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(sockaddr_in6))) {
-		printf("UDP packet not handled by UTP.  Ignoring.\n");
+	} else {
+		size_t addrlen = addr->sa_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
+		if (!utp_process_udp(ctx.get(), static_cast<const byte *>(buf), len, addr, addrlen)) {
+			// printf("UDP packet not handled by UTP.  Ignoring.\n");
+		}
 	}
-	utp_check_timeouts(ctx.get());
 }
 
 uint64 UTPContext::sendTo(const void *buf, size_t len, const struct sockaddr *addr, socklen_t addrlen) {
@@ -139,33 +187,49 @@ uint64 UTPContext::sendTo(const void *buf, size_t len, const struct sockaddr *ad
 }
 
 bool UTPContext::onFirewall() {
-	if (!listening) return true; // not a listen socket
+	if (state != STATE_BOUND || !listening) return true; // not a listen socket
 	if (backlog > 0 && connections >= backlog) return true; // connections reach limit
 	return false;
 }
 
 void UTPContext::onAccept(utp_socket *sock) {
+	assert(state == STATE_BOUND && listening);
 	Nan::HandleScope scope;
-	v8::Local<v8::Object> connObj = UTPSocket::create(this, sock)->handle();
-	v8::Local<v8::Function> onConn = Nan::Get(handle(), Nan::New("_onConnect").ToLocalChecked()).ToLocalChecked().As<v8::Function>();
+	UTPSocket *utpsock = new UTPSocket(this, sock);
+	v8::Local<v8::Object> connObj = utpsock->handle();
+	v8::Local<v8::Function> onConn = Nan::Get(handle(), Nan::New("_onConnection").ToLocalChecked()).ToLocalChecked().As<v8::Function>();
 	v8::Local<v8::Value> argv[1] = {connObj};
 	Nan::Callback(onConn).Call(1, argv);
+	utpsock->onConnect();
 }
 
-
-NAN_METHOD(UTPContext::Init) {
+void UTPContext::Init(v8::Local<v8::Object> exports, v8::Local<v8::Object> module) {
 	Nan::HandleScope scope;
 
 	v8::Local<v8::FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>(New);
 	tpl->SetClassName(Nan::New("UTPContext").ToLocalChecked());
 	tpl->InstanceTemplate()->SetInternalFieldCount(1);
 
+	Nan::SetPrototypeMethod(tpl, "bind", Bind);
+	Nan::SetPrototypeMethod(tpl, "listen", Listen);
+	Nan::SetPrototypeMethod(tpl, "connect", Connect);
+	Nan::SetPrototypeMethod(tpl, "close", Close);
+
+	exports->Set(Nan::New("UTPContext").ToLocalChecked(), tpl->GetFunction());
 	constructor.Reset(tpl->GetFunction());
 }
 
 NAN_METHOD(UTPContext::New) {
 	Nan::HandleScope scope;
+	UTPContext *utpctx = new UTPContext();
+	utpctx->Wrap(info.This());
 	info.GetReturnValue().Set(info.This());
+}
+
+NAN_METHOD(UTPContext::State) {
+	Nan::HandleScope scope;
+	UTPContext *utpctx = Nan::ObjectWrap::Unwrap<UTPContext>(info.Holder());
+	info.GetReturnValue().Set(Nan::New(statestr[utpctx->state]).ToLocalChecked());
 }
 
 NAN_METHOD(UTPContext::Bind) {
@@ -173,26 +237,21 @@ NAN_METHOD(UTPContext::Bind) {
 	UTPContext *utpctx = Nan::ObjectWrap::Unwrap<UTPContext>(info.Holder());
 	unsigned int port = Nan::To<v8::Uint32>(info[0]).ToLocalChecked()->Value();
 	string host(*Nan::Utf8String(info[1]));
-	if (utpctx->state != STATE_INIT) {
-		Nan::ThrowError("socket has already been bound");
-		return;
-	}
+	assert(utpctx->state == STATE_INIT);
 	int result = utpctx->bind(static_cast<uint16_t>(port), host);
 	if (result == 0) {
 		info.GetReturnValue().Set(Nan::New<v8::Boolean>(true));
+	} else {
+		v8::Local<v8::Value> err = Nan::Error(uv_strerror(result));
+		Nan::To<v8::Object>(err).ToLocalChecked()->Set(Nan::New("code").ToLocalChecked(), Nan::New(uv_err_name(result)).ToLocalChecked());
+		Nan::ThrowError(err);
 	}
-	v8::Local<v8::Value> err = Nan::Error(uv_strerror(result));
-	err.As<v8::Object>()->Set(Nan::New("code").ToLocalChecked(), Nan::New(uv_err_name(result)).ToLocalChecked());
-	Nan::ThrowError(err);
 }
 
 NAN_METHOD(UTPContext::Listen) {
 	Nan::HandleScope scope;
 	UTPContext *utpctx = Nan::ObjectWrap::Unwrap<UTPContext>(info.Holder());
-	if (utpctx->state != STATE_BOUND) {
-		Nan::ThrowError("invalid socket state");
-		return;
-	}
+	assert(utpctx->state == STATE_BOUND);
 	int backlog = Nan::To<v8::Int32>(info[0]).ToLocalChecked()->Value();
 	utpctx->listen(backlog);
 }
@@ -202,20 +261,22 @@ NAN_METHOD(UTPContext::Connect) {
 	UTPContext *utpctx = Nan::ObjectWrap::Unwrap<UTPContext>(info.Holder());
 	unsigned int port = Nan::To<v8::Uint32>(info[0]).ToLocalChecked()->Value();
 	string host(*Nan::Utf8String(info[1]));
-	if (utpctx->state != STATE_BOUND) {
-		Nan::ThrowError("invalid socket state");
-		return;
+	assert(utpctx->state == STATE_BOUND);
+	UTPSocket *utpsock;
+	int result = utpctx->connect(static_cast<uint16_t>(port), host, &utpsock);
+	if (result == 0) {
+		info.GetReturnValue().Set(utpsock->handle());
+	} else {
+		v8::Local<v8::Value> err = Nan::Error(uv_strerror(result));
+		Nan::To<v8::Object>(err).ToLocalChecked()->Set(Nan::New("code").ToLocalChecked(), Nan::New(uv_err_name(result)).ToLocalChecked());
+		Nan::ThrowError(err);
 	}
-	UTPSocket *utpsock = utpctx->connect(static_cast<uint16_t>(port), host);
-	if (!utpsock) {
-		Nan::ThrowError("fail to connect");
-		return;
-	}
-	info.GetReturnValue().Set(utpsock->handle());
 }
 
 NAN_METHOD(UTPContext::Close) {
 	Nan::HandleScope scope;
 	UTPContext *utpctx = Nan::ObjectWrap::Unwrap<UTPContext>(info.Holder());
-	utpctx->stop();
+	utpctx->destroy();
+}
+
 }
