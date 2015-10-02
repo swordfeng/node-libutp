@@ -10,7 +10,8 @@
 				'<!(node -e "require(\'nan\')")',
 			],
 			"sources": [
-				'src/utp_context.cc'
+				'src/utp_context.cc',
+				'src/utp_socket.cc'
 			],
 			'conditions': [
 				['OS=="win"', {
@@ -18,7 +19,7 @@
 					],
 				}, { # OS!="win"
 					'cflags': [
-						'-std=c++11',
+						'-std=c++14',
 					],
 					'libraries': [
 					],

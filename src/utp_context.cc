@@ -170,9 +170,8 @@ NAN_METHOD(UTPContext::New) {
 
 NAN_METHOD(UTPContext::Bind) {
 	Nan::HandleScope scope;
-	v8::Isolate *isolate = info.GetIsolate();
 	UTPContext *utpctx = Nan::ObjectWrap::Unwrap<UTPContext>(info.Holder());
-	int port = info[0].As<v8::Uint32>()->Value();
+	unsigned int port = Nan::To<v8::Uint32>(info[0]).ToLocalChecked()->Value();
 	string host(*Nan::Utf8String(info[1]));
 	if (utpctx->state != STATE_INIT) {
 		Nan::ThrowError("socket has already been bound");
@@ -180,7 +179,7 @@ NAN_METHOD(UTPContext::Bind) {
 	}
 	int result = utpctx->bind(static_cast<uint16_t>(port), host);
 	if (result == 0) {
-		info.GetReturnValue().Set(v8::Boolean::New(isolate, true));
+		info.GetReturnValue().Set(Nan::New<v8::Boolean>(true));
 	}
 	v8::Local<v8::Value> err = Nan::Error(uv_strerror(result));
 	err.As<v8::Object>()->Set(Nan::New("code").ToLocalChecked(), Nan::New(uv_err_name(result)).ToLocalChecked());
@@ -189,19 +188,21 @@ NAN_METHOD(UTPContext::Bind) {
 
 NAN_METHOD(UTPContext::Listen) {
 	Nan::HandleScope scope;
-	v8::Isolate *isolate = info.GetIsolate();
 	UTPContext *utpctx = Nan::ObjectWrap::Unwrap<UTPContext>(info.Holder());
-	int backlog = info[0].As<v8::Int32>()->Value();
+	if (utpctx->state != STATE_BOUND) {
+		Nan::ThrowError("invalid socket state");
+		return;
+	}
+	int backlog = Nan::To<v8::Int32>(info[0]).ToLocalChecked()->Value();
 	utpctx->listen(backlog);
 }
 
 NAN_METHOD(UTPContext::Connect) {
 	Nan::HandleScope scope;
-	v8::Isolate *isolate = info.GetIsolate();
 	UTPContext *utpctx = Nan::ObjectWrap::Unwrap<UTPContext>(info.Holder());
-	int port = info[0].As<v8::Uint32>()->Value();
+	unsigned int port = Nan::To<v8::Uint32>(info[0]).ToLocalChecked()->Value();
 	string host(*Nan::Utf8String(info[1]));
-	if (utpctx->state != STATE_INIT) {
+	if (utpctx->state != STATE_BOUND) {
 		Nan::ThrowError("invalid socket state");
 		return;
 	}
@@ -211,4 +212,10 @@ NAN_METHOD(UTPContext::Connect) {
 		return;
 	}
 	info.GetReturnValue().Set(utpsock->handle());
+}
+
+NAN_METHOD(UTPContext::Close) {
+	Nan::HandleScope scope;
+	UTPContext *utpctx = Nan::ObjectWrap::Unwrap<UTPContext>(info.Holder());
+	utpctx->stop();
 }

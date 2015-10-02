@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <memory>
 #include <functional>
+#include <algorithm>
 extern "C" {
 #include <netinet/in.h>
 }
@@ -49,7 +50,7 @@ private:
 	static NAN_METHOD(Bind);
 	static NAN_METHOD(Listen);
 	static NAN_METHOD(Connect);
-	//static NAN_METHOD(Close);
+	static NAN_METHOD(Close);
 	//static NAN_METHOD(uvRef);
 	//static NAN_METHOD(uvUnref);
 public:
@@ -69,15 +70,24 @@ private:
 	const UTPContext *utpctx;
 	utp_socket *sock;
 	unique_ptr<char[]> chunk;
+    size_t chunkLength = 0;
 	size_t chunkOffset = 0;
+    Nan::Callback writeCb;
 	bool writable = false;
 
-	UTPSocket(UTPContext *_utpctx, utp_socket *_sock, v8::Local<v8::Object>);
+    bool paused = false;
+    const char *readBuf = nullptr;
+    size_t readLen = 0;
+
+	UTPSocket(UTPContext *_utpctx, utp_socket *_sock, v8::Local<v8::Object> sockObj);
+    void setChunk(const char *_chunk, size_t len, v8::Local<v8::Function> cb);
+    void write();
+    void read();
 
 	static NAN_METHOD(Init);
 	static NAN_METHOD(New);
 	static NAN_METHOD(Write);
-	static NAN_METHOD(End);
+	static NAN_METHOD(Close);
 	static NAN_METHOD(Pause);
 	static NAN_METHOD(Resume);
 public:
