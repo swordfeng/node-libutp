@@ -12,12 +12,6 @@ listening(false),
 backlog(0),
 connections(0)
 {
-#ifdef _DEBUG
-	utp_context_set_option(ctx.get(), UTP_LOG_NORMAL, 1);
-	utp_context_set_option(ctx.get(), UTP_LOG_MTU,    1);
-	utp_context_set_option(ctx.get(), UTP_LOG_DEBUG,  1);
-#endif
-
 	assert(uv_udp_init(uv_default_loop(), &udpHandle) >= 0);
 	assert(uv_timer_init(uv_default_loop(), &timerHandle) >= 0);
 
@@ -31,6 +25,17 @@ connections(0)
 			return utpctx->onCallback(a);
 		});
 	}
+
+#ifdef _DEBUG
+	utp_context_set_option(ctx.get(), UTP_LOG_NORMAL, 1);
+	utp_context_set_option(ctx.get(), UTP_LOG_MTU,    1);
+	utp_context_set_option(ctx.get(), UTP_LOG_DEBUG,  1);
+	utp_set_callback(ctx.get(), UTP_LOG, [] (utp_callback_arguments *a) -> uint64 {
+		//std::cout << a->buf << std::endl;
+		return 0;
+	});
+#endif
+
 }
 
 UTPContext::~UTPContext() {
@@ -109,10 +114,13 @@ void UTPContext::listen(int _backlog) {
 
 void UTPContext::destroy() {
 	listening = false;
-	uv_unref(reinterpret_cast<uv_handle_t *>(&udpHandle));
-	uv_unref(reinterpret_cast<uv_handle_t *>(&timerHandle));
 	state = STATE_STOPPED;
 	if (connections == 0 && state == STATE_STOPPED) {
+		Nan::HandleScope scope;
+		v8::Local<v8::Function> onClose = Nan::Get(handle(), Nan::New("_onClose").ToLocalChecked()).ToLocalChecked().As<v8::Function>();
+		Nan::Callback(onClose).Call(0, 0);
+		uv_unref(reinterpret_cast<uv_handle_t *>(&udpHandle));
+		uv_unref(reinterpret_cast<uv_handle_t *>(&timerHandle));
 		Unref();
 		MakeWeak();
 		assert(uv_timer_stop(&timerHandle) >= 0);
@@ -169,7 +177,8 @@ uint64 UTPContext::onCallback(utp_callback_arguments *a) {
 void UTPContext::uvRecv(ssize_t len, const void *buf, const struct sockaddr *addr, unsigned flags) {
 	assert(len >= 0);
 	if (!len && !addr) {
-		// no more data
+		// no data
+		utp_issue_deferred_acks(ctx.get());
 	} else {
 		size_t addrlen = addr->sa_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
 		if (!utp_process_udp(ctx.get(), static_cast<const byte *>(buf), len, addr, addrlen)) {
@@ -181,7 +190,9 @@ void UTPContext::uvRecv(ssize_t len, const void *buf, const struct sockaddr *add
 uint64 UTPContext::sendTo(const void *buf, size_t len, const struct sockaddr *addr, socklen_t addrlen) {
 	unique_ptr<char[]> tmpbuf(new char[len]);
 	memcpy(tmpbuf.get(), buf, len);
-	uv_buf_t uvbuf = {tmpbuf.get(), len};
+	uv_buf_t uvbuf;
+	uvbuf.base = tmpbuf.get();
+	uvbuf.len = len;
 	uv_udp_try_send(&udpHandle, &uvbuf, 1, addr);
 	return 0;
 }
@@ -200,7 +211,6 @@ void UTPContext::onAccept(utp_socket *sock) {
 	v8::Local<v8::Function> onConn = Nan::Get(handle(), Nan::New("_onConnection").ToLocalChecked()).ToLocalChecked().As<v8::Function>();
 	v8::Local<v8::Value> argv[1] = {connObj};
 	Nan::Callback(onConn).Call(1, argv);
-	utpsock->onConnect();
 }
 
 void UTPContext::Init(v8::Local<v8::Object> exports, v8::Local<v8::Object> module) {
@@ -214,6 +224,7 @@ void UTPContext::Init(v8::Local<v8::Object> exports, v8::Local<v8::Object> modul
 	Nan::SetPrototypeMethod(tpl, "listen", Listen);
 	Nan::SetPrototypeMethod(tpl, "connect", Connect);
 	Nan::SetPrototypeMethod(tpl, "close", Close);
+	Nan::SetPrototypeMethod(tpl, "state", State);
 
 	exports->Set(Nan::New("UTPContext").ToLocalChecked(), tpl->GetFunction());
 	constructor.Reset(tpl->GetFunction());

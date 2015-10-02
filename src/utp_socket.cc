@@ -59,7 +59,7 @@ NAN_METHOD(UTPSocket::Close) {
 	Nan::HandleScope scope;
 	UTPSocket *utpsock = get(info.Holder());
 	assert(utpsock->sock);
-	utp_close(utpsock->sock);
+	utpsock->onEnd();
 }
 
 NAN_METHOD(UTPSocket::Pause) {
@@ -76,10 +76,9 @@ NAN_METHOD(UTPSocket::Resume) {
 }
 
 void UTPSocket::setChunk(const char *_chunk, size_t len, v8::Local<v8::Function> cb) {
-	char *buf = new char[len];
-	std::copy(_chunk, _chunk + len, buf);
 	assert(!chunk.get());
-	chunk.reset(buf);
+	chunk.reset(new char[len]);
+	std::copy(_chunk, _chunk + len, chunk.get());
 	chunkLength = len;
 	chunkOffset = 0;
 	writeCb.SetFunction(cb);
@@ -88,7 +87,8 @@ void UTPSocket::setChunk(const char *_chunk, size_t len, v8::Local<v8::Function>
 void UTPSocket::write() {
 	char *data = chunk.get();
 	if (!sock || !connected || !data) return;
-	while (chunkOffset < chunkLength) {
+	int t = 5;
+	while (chunkOffset < chunkLength || chunkLength == 0) {
 		size_t len = chunkLength - chunkOffset;
 		size_t sent = utp_write(sock, data + chunkOffset, len);
 		chunkOffset += sent;
@@ -105,6 +105,7 @@ void UTPSocket::onConnect() {
 	Nan::HandleScope scope;
 	connected = true;
 	Nan::Callback(handle()->Get(Nan::New("_onConnect").ToLocalChecked()).As<v8::Function>()).Call(0, 0);
+	write();
 }
 
 void UTPSocket::read() {
@@ -128,10 +129,10 @@ void UTPSocket::onWritable() {
 void UTPSocket::onEnd() {
 	Nan::HandleScope scope;
 	Nan::Callback(handle()->Get(Nan::New("_onEnd").ToLocalChecked()).As<v8::Function>()).Call(0, 0);
+	utp_close(sock);
 }
 
 void UTPSocket::onError(int errcode) {
-	if (!sock) return;
 	Nan::HandleScope scope;
 	const char *errstr = "unknown error", *errname = "UNKNOWN";
 	switch (errcode) {
