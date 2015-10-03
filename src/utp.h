@@ -69,6 +69,7 @@ private:
 	static NAN_METHOD(Connect);
 	static NAN_METHOD(Close);
     static NAN_METHOD(State);
+    static NAN_METHOD(Address);
 	static NAN_METHOD(jsRef);
 	static NAN_METHOD(jsUnref);
 

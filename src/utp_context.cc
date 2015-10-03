@@ -263,6 +263,7 @@ void UTPContext::Init(v8::Local<v8::Object> exports, v8::Local<v8::Object> modul
 	Nan::SetPrototypeMethod(tpl, "connect", Connect);
 	Nan::SetPrototypeMethod(tpl, "close", Close);
 	Nan::SetPrototypeMethod(tpl, "state", State);
+	Nan::SetPrototypeMethod(tpl, "address", Address);
 	Nan::SetPrototypeMethod(tpl, "ref", jsRef);
 	Nan::SetPrototypeMethod(tpl, "unref", jsUnref);
 
@@ -281,6 +282,40 @@ NAN_METHOD(UTPContext::State) {
 	Nan::HandleScope scope;
 	UTPContext *utpctx = Nan::ObjectWrap::Unwrap<UTPContext>(info.Holder());
 	info.GetReturnValue().Set(Nan::New(statestr[utpctx->state]).ToLocalChecked());
+}
+
+NAN_METHOD(UTPContext::Address) {
+	Nan::HandleScope scope;
+	UTPContext *utpctx = Nan::ObjectWrap::Unwrap<UTPContext>(info.Holder());
+	if (utpctx->state != STATE_BOUND) {
+		info.GetReturnValue().Set(Nan::Null());
+	} else {
+		union {
+			struct sockaddr saddr;
+			struct sockaddr_in sin;
+			struct sockaddr_in6 sin6;
+		} addr;
+		int len = sizeof(addr);
+		assert(uv_udp_getsockname(&utpctx->udpHandle, &addr.saddr, &len) >= 0);
+		char address[50];
+		v8::Local<v8::Object> res = Nan::New<v8::Object>();
+		assert(addr.saddr.sa_family == AF_INET || addr.saddr.sa_family == AF_INET6);
+		if (addr.saddr.sa_family == AF_INET) {
+			// ipv4
+			assert(uv_ip4_name(&addr.sin, address, 50) >= 0);
+			res->Set(Nan::New("address").ToLocalChecked(), Nan::New(address).ToLocalChecked());
+			res->Set(Nan::New("family").ToLocalChecked(), Nan::New("IPv4").ToLocalChecked());
+			res->Set(Nan::New("port").ToLocalChecked(), Nan::New<v8::Uint32>(ntohs(addr.sin.sin_port)));
+		} else {
+			// ipv6
+			assert(uv_ip6_name(&addr.sin6, address, 50) >= 0);
+			res->Set(Nan::New("address").ToLocalChecked(), Nan::New(address).ToLocalChecked());
+			res->Set(Nan::New("family").ToLocalChecked(), Nan::New("IPv6").ToLocalChecked());
+			res->Set(Nan::New("port").ToLocalChecked(), Nan::New<v8::Uint32>(ntohs(addr.sin6.sin6_port)));
+		}
+		info.GetReturnValue().Set(res);
+	}
+
 }
 
 NAN_METHOD(UTPContext::Bind) {
