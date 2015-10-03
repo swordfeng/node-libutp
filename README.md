@@ -8,5 +8,3 @@ socket#pause() and socket#resume() are not implemented.
 
 The library may not suitable for using in production.
 If you find any bugs, feel free to open an issue.
-
-TODO: use epoll instead of libuv on linux so that ICMP messages can be handled.
