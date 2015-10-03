@@ -84,7 +84,7 @@ private:
 	bool connected;
 
     bool paused;
-    const char *readBuf;
+    unique_ptr<char[]> readBuf;
     size_t readLen;
 
     void setChunk(const char *_chunk, size_t len, v8::Local<v8::Function> cb);
@@ -94,8 +94,9 @@ private:
 	static NAN_METHOD(New);
 	static NAN_METHOD(Write);
 	static NAN_METHOD(Close);
-	static NAN_METHOD(Pause);
-	static NAN_METHOD(Resume);
+	static NAN_METHOD(ForceTimedOut);
+	//static NAN_METHOD(Pause);
+	//static NAN_METHOD(Resume);
 public:
     static void Init(v8::Local<v8::Object> exports, v8::Local<v8::Object> module);
 	static UTPSocket *get(utp_socket *sock) {

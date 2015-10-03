@@ -97,6 +97,8 @@ int UTPContext::connect(uint16_t port, string host, UTPSocket **putpsock) {
 	} else {
 		return errcode;
 	}
+	uv_ref(reinterpret_cast<uv_handle_t *>(&udpHandle));
+	uv_ref(reinterpret_cast<uv_handle_t *>(&timerHandle));
 	connections++;
 	*putpsock = new UTPSocket(this, sock);
 	return 0;
