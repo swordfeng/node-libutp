@@ -48,6 +48,7 @@ private:
 	bool listening;
 	int backlog;
 	int connections;
+	int pendingConnections;
     int refCount;
     bool refSelf;
 

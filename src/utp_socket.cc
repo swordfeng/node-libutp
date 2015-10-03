@@ -175,8 +175,10 @@ void UTPSocket::onWritable() {
 }
 
 void UTPSocket::onEnd() {
-	utp_close(sock);
-	activeSockets.erase(sock);
+	if (activeSockets.find(sock) != activeSockets.end()) {
+		utp_close(sock);
+		activeSockets.erase(sock);
+	}
 	Nan::HandleScope scope;
 	Nan::Callback(handle()->Get(Nan::New("_onEnd").ToLocalChecked()).As<v8::Function>()).Call(0, 0);
 }
@@ -202,8 +204,10 @@ void UTPSocket::onError(int errcode) {
 	Nan::To<v8::Object>(err).ToLocalChecked()->Set(Nan::New("code").ToLocalChecked(), Nan::New(errname).ToLocalChecked());
 	v8::Local<v8::Value> argv[] = {err};
 	Nan::Callback(handle()->Get(Nan::New("_onError").ToLocalChecked()).As<v8::Function>()).Call(1, argv);
-	utp_close(sock);
-	activeSockets.erase(sock);
+	if (activeSockets.find(sock) != activeSockets.end()) {
+		utp_close(sock);
+		activeSockets.erase(sock);
+	}
 }
 
 void UTPSocket::onDestroy() {
