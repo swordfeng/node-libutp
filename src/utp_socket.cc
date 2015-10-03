@@ -50,6 +50,7 @@ void UTPSocket::Init(v8::Local<v8::Object> exports, v8::Local<v8::Object> module
 	Nan::SetPrototypeMethod(tpl, "write", Write);
 	Nan::SetPrototypeMethod(tpl, "close", Close);
 	Nan::SetPrototypeMethod(tpl, "forceTimedOut", ForceTimedOut);
+	Nan::SetPrototypeMethod(tpl, "remoteAddress", RemoteAddress);
 	//Nan::SetPrototypeMethod(tpl, "pause", Pause);
 	//Nan::SetPrototypeMethod(tpl, "resume", Resume);
 	Nan::SetPrototypeMethod(tpl, "ref", jsRef);
@@ -85,6 +86,40 @@ NAN_METHOD(UTPSocket::ForceTimedOut) {
 	Nan::HandleScope scope;
 	UTPSocket *utpsock = get(info.Holder());
 	utpsock->onError(UTP_ETIMEDOUT);
+}
+
+NAN_METHOD(UTPSocket::RemoteAddress) {
+	Nan::HandleScope scope;
+	UTPSocket *utpsock = Nan::ObjectWrap::Unwrap<UTPSocket>(info.Holder());
+	if (activeSockets.find(utpsock->sock) == activeSockets.end()) {
+		info.GetReturnValue().Set(Nan::Null());
+	} else {
+		union {
+			struct sockaddr saddr;
+			struct sockaddr_in sin;
+			struct sockaddr_in6 sin6;
+		} addr;
+		socklen_t len = sizeof(addr);
+		assert(utp_getpeername(utpsock->sock, &addr.saddr, &len) >= 0);
+		char address[50];
+		v8::Local<v8::Object> res = Nan::New<v8::Object>();
+		assert(addr.saddr.sa_family == AF_INET || addr.saddr.sa_family == AF_INET6);
+		if (addr.saddr.sa_family == AF_INET) {
+			// ipv4
+			assert(uv_ip4_name(&addr.sin, address, 50) >= 0);
+			res->Set(Nan::New("address").ToLocalChecked(), Nan::New(address).ToLocalChecked());
+			res->Set(Nan::New("family").ToLocalChecked(), Nan::New("IPv4").ToLocalChecked());
+			res->Set(Nan::New("port").ToLocalChecked(), Nan::New<v8::Uint32>(ntohs(addr.sin.sin_port)));
+		} else {
+			// ipv6
+			assert(uv_ip6_name(&addr.sin6, address, 50) >= 0);
+			res->Set(Nan::New("address").ToLocalChecked(), Nan::New(address).ToLocalChecked());
+			res->Set(Nan::New("family").ToLocalChecked(), Nan::New("IPv6").ToLocalChecked());
+			res->Set(Nan::New("port").ToLocalChecked(), Nan::New<v8::Uint32>(ntohs(addr.sin6.sin6_port)));
+		}
+		info.GetReturnValue().Set(res);
+	}
+
 }
 
 NAN_METHOD(UTPSocket::jsRef) {

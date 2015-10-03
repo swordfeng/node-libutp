@@ -113,6 +113,7 @@ private:
 	static NAN_METHOD(ForceTimedOut);
 	//static NAN_METHOD(Pause);
 	//static NAN_METHOD(Resume);
+	static NAN_METHOD(RemoteAddress);
 	static NAN_METHOD(jsRef);
 	static NAN_METHOD(jsUnref);
 
