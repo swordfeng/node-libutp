@@ -15,12 +15,12 @@
 				'src/utp.cc'
 			],
 			'defines':[
-				'_DEBUG',
 				'UTP_DEBUG_LOGGING'
 			],
 			'conditions': [
 				['OS=="win"', {
 					'libraries': [
+						'Ws2_32.lib'
 					],
 				}, { # OS!="win"
 					'cflags': [
@@ -40,7 +40,6 @@
 			'target_name': 'libutp',
 			'type': 'static_library',
 			'defines': [
-			    '_DEBUG',
 			    'UTP_DEBUG_LOGGING'
 			],
 			'sources': [
@@ -71,6 +70,12 @@
 						'WIN32',
 						'ENABLE_I18N',
 						'ENABLE_SRP=1'
+					],
+					'sources':[
+						'deps/libutp/libutp_inet_ntop.cpp',
+					],
+					'libraries': [
+						'Ws2_32.lib'
 					],
 				}, {  # OS != "win",
 				}],
