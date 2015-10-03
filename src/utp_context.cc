@@ -11,6 +11,7 @@ state(STATE_INIT),
 listening(false),
 backlog(0),
 connections(0),
+pendingConnections(0),
 refCount(0),
 refSelf(false)
 {
@@ -128,6 +129,7 @@ int UTPContext::connect(uint16_t port, string host, UTPSocket **putpsock) {
 		return errcode;
 	}
 	connections++;
+	pendingConnections++;
 	*putpsock = new UTPSocket(this, sock);
 	return 0;
 }
@@ -172,6 +174,7 @@ uint64 UTPContext::onCallback(utp_callback_arguments *a) {
 		return static_cast<uint64>(onFirewall());
 	case UTP_ON_ACCEPT:
 		connections++;
+		pendingConnections++;
 		onAccept(a->socket);
 		return 0;
 
@@ -183,6 +186,7 @@ uint64 UTPContext::onCallback(utp_callback_arguments *a) {
 		utpsock = UTPSocket::get(a->socket);
 		switch (a->state) {
 		case UTP_STATE_CONNECT:
+			pendingConnections--;
 			utpsock->onConnect();
 			return 0;
 		case UTP_STATE_WRITABLE:
@@ -233,7 +237,7 @@ uint64 UTPContext::sendTo(const void *buf, size_t len, const struct sockaddr *ad
 
 bool UTPContext::onFirewall() {
 	if (state != STATE_BOUND || !listening) return true; // not a listen socket
-	if (backlog > 0 && connections >= backlog) return true; // connections reach limit
+	if (backlog > 0 && pendingConnections >= backlog) return true; // pending connections reach limit
 	return false;
 }
 
