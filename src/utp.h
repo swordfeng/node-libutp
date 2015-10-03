@@ -20,6 +20,7 @@ using std::unique_ptr;
 using std::function;
 using std::vector;
 using std::nothrow;
+using std::unordered_set;
 
 class UTPContext;
 class UTPSocket;
@@ -42,6 +43,8 @@ private:
 	bool listening;
 	int backlog;
 	int connections;
+    int refCount;
+    bool refSelf;
 
 	void uvRecv(ssize_t len, const void *buf, const struct sockaddr *addr, unsigned flags);
 	uint64 sendTo(const void *buf, size_t len, const struct sockaddr *addr, socklen_t addrlen);
@@ -56,26 +59,32 @@ private:
     void stop();
     void destroy();
 
+    void uvRef();
+    void uvUnref();
+
 	static NAN_METHOD(New);
 	static NAN_METHOD(Bind);
 	static NAN_METHOD(Listen);
 	static NAN_METHOD(Connect);
 	static NAN_METHOD(Close);
     static NAN_METHOD(State);
-	//static NAN_METHOD(uvRef);
-	//static NAN_METHOD(uvUnref);
+	static NAN_METHOD(jsRef);
+	static NAN_METHOD(jsUnref);
 
 public:
 	static void Init(v8::Local<v8::Object> exports, v8::Local<v8::Object> module);
 	UTPContext();
 	~UTPContext();
+    void sockRef();
+    void sockUnref();
 };
 
 class UTPSocket final : public Nan::ObjectWrap {
 private:
+    static unordered_set<utp_socket *> activeSockets;
 	static Nan::Persistent<v8::Function> constructor;
 
-	const UTPContext *utpctx;
+	UTPContext *const utpctx;
 	utp_socket *sock;
 	unique_ptr<char[]> chunk;
     size_t chunkLength;
@@ -87,9 +96,14 @@ private:
     unique_ptr<char[]> readBuf;
     size_t readLen;
 
+    bool refSelf;
+
     void setChunk(const char *_chunk, size_t len, v8::Local<v8::Function> cb);
     void write();
     void read();
+
+    void uvRef();
+    void uvUnref();
 
 	static NAN_METHOD(New);
 	static NAN_METHOD(Write);
@@ -97,6 +111,9 @@ private:
 	static NAN_METHOD(ForceTimedOut);
 	//static NAN_METHOD(Pause);
 	//static NAN_METHOD(Resume);
+	static NAN_METHOD(jsRef);
+	static NAN_METHOD(jsUnref);
+
 public:
     static void Init(v8::Local<v8::Object> exports, v8::Local<v8::Object> module);
 	static UTPSocket *get(utp_socket *sock) {
@@ -113,5 +130,7 @@ public:
     void onWritable();
     void onEnd();
     void onDestroy();
+
+    static NAN_METHOD(CleanUp);
 };
 }

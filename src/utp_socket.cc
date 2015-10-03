@@ -2,6 +2,7 @@
 
 namespace nodeUTP {
 
+unordered_set<utp_socket *> UTPSocket::activeSockets;
 Nan::Persistent<v8::Function> UTPSocket::constructor;
 
 UTPSocket::UTPSocket(UTPContext *_utpctx, utp_socket *_sock):
@@ -12,16 +13,31 @@ chunkOffset(0),
 connected(false),
 paused(false),
 readBuf(nullptr),
-readLen(0)
+readLen(0),
+refSelf(false)
 {
 	utp_set_userdata(sock, this);
+	activeSockets.insert(sock);
 	Nan::HandleScope scope;
 	v8::Local<v8::Object> sockObj = Nan::New(constructor)->NewInstance(0, 0);
 	Wrap(sockObj);
+	uvRef();
 	Ref();
 }
 
 UTPSocket::~UTPSocket() {
+}
+
+void UTPSocket::uvRef() {
+	if (refSelf) return;
+	refSelf = true;
+	utpctx->sockRef();
+}
+
+void UTPSocket::uvUnref() {
+	if (!refSelf) return;
+	refSelf = false;
+	utpctx->sockUnref();
 }
 
 void UTPSocket::Init(v8::Local<v8::Object> exports, v8::Local<v8::Object> module) {
@@ -36,6 +52,8 @@ void UTPSocket::Init(v8::Local<v8::Object> exports, v8::Local<v8::Object> module
 	Nan::SetPrototypeMethod(tpl, "forceTimedOut", ForceTimedOut);
 	//Nan::SetPrototypeMethod(tpl, "pause", Pause);
 	//Nan::SetPrototypeMethod(tpl, "resume", Resume);
+	Nan::SetPrototypeMethod(tpl, "ref", jsRef);
+	Nan::SetPrototypeMethod(tpl, "unref", jsUnref);
 
 	// do not expose constructor
 	//exports->Set(Nan::New("UTPSocket").ToLocalChecked(), tpl->GetFunction());
@@ -67,6 +85,25 @@ NAN_METHOD(UTPSocket::ForceTimedOut) {
 	Nan::HandleScope scope;
 	UTPSocket *utpsock = get(info.Holder());
 	utpsock->onError(UTP_ETIMEDOUT);
+}
+
+NAN_METHOD(UTPSocket::jsRef) {
+	Nan::HandleScope scope;
+	UTPSocket *utpsock = get(info.Holder());
+	utpsock->uvRef();
+}
+
+NAN_METHOD(UTPSocket::jsUnref) {
+	Nan::HandleScope scope;
+	UTPSocket *utpsock = get(info.Holder());
+	utpsock->uvUnref();
+}
+
+NAN_METHOD(UTPSocket::CleanUp) {
+	for (auto sock: activeSockets) {
+		utp_close(sock);
+	}
+	activeSockets.empty();
 }
 
 /*
@@ -138,9 +175,10 @@ void UTPSocket::onWritable() {
 }
 
 void UTPSocket::onEnd() {
+	utp_close(sock);
+	activeSockets.erase(sock);
 	Nan::HandleScope scope;
 	Nan::Callback(handle()->Get(Nan::New("_onEnd").ToLocalChecked()).As<v8::Function>()).Call(0, 0);
-	utp_close(sock);
 }
 
 void UTPSocket::onError(int errcode) {
@@ -165,6 +203,7 @@ void UTPSocket::onError(int errcode) {
 	v8::Local<v8::Value> argv[] = {err};
 	Nan::Callback(handle()->Get(Nan::New("_onError").ToLocalChecked()).As<v8::Function>()).Call(1, argv);
 	utp_close(sock);
+	activeSockets.erase(sock);
 }
 
 void UTPSocket::onDestroy() {
@@ -172,6 +211,7 @@ void UTPSocket::onDestroy() {
 	Nan::HandleScope scope;
 	Nan::Callback(handle()->Get(Nan::New("_onDestroy").ToLocalChecked()).As<v8::Function>()).Call(0, 0);
 	sock = nullptr;
+	uvUnref();
 	Unref();
 	MakeWeak();
 }

@@ -10,7 +10,9 @@ ctx(utp_init(2), [] (utp_context *ctx) { if (ctx) utp_destroy(ctx); }),
 state(STATE_INIT),
 listening(false),
 backlog(0),
-connections(0)
+connections(0),
+refCount(0),
+refSelf(false)
 {
 	assert(uv_udp_init(uv_default_loop(), &udpHandle) >= 0);
 	assert(uv_timer_init(uv_default_loop(), &timerHandle) >= 0);
@@ -39,6 +41,35 @@ connections(0)
 }
 
 UTPContext::~UTPContext() {
+}
+
+void UTPContext::uvRef() {
+	refSelf = true;
+	uv_ref(reinterpret_cast<uv_handle_t *>(&udpHandle));
+	uv_ref(reinterpret_cast<uv_handle_t *>(&timerHandle));
+}
+
+void UTPContext::uvUnref() {
+	refSelf = false;
+	if (refCount == 0)	{
+		uv_unref(reinterpret_cast<uv_handle_t *>(&udpHandle));
+		uv_unref(reinterpret_cast<uv_handle_t *>(&timerHandle));
+	}
+}
+
+void UTPContext::sockRef() {
+	refCount++;
+	uv_ref(reinterpret_cast<uv_handle_t *>(&udpHandle));
+	uv_ref(reinterpret_cast<uv_handle_t *>(&timerHandle));
+}
+
+void UTPContext::sockUnref() {
+	assert(refCount);
+	refCount--;
+	if (!refSelf)	{
+		uv_unref(reinterpret_cast<uv_handle_t *>(&udpHandle));
+		uv_unref(reinterpret_cast<uv_handle_t *>(&timerHandle));
+	}
 }
 
 /* return libuv errro code */
@@ -72,8 +103,7 @@ int UTPContext::bind(uint16_t port, string host) {
 		if (!utpctx->ctx.get()) return;
 		utp_check_timeouts(utpctx->ctx.get());
 	}), 0, 500) >= 0);
-	uv_unref(reinterpret_cast<uv_handle_t *>(&udpHandle));
-	uv_unref(reinterpret_cast<uv_handle_t *>(&timerHandle));
+	uvUnref();
 	Ref();
 	state = STATE_BOUND;
 	return 0;
@@ -97,8 +127,6 @@ int UTPContext::connect(uint16_t port, string host, UTPSocket **putpsock) {
 	} else {
 		return errcode;
 	}
-	uv_ref(reinterpret_cast<uv_handle_t *>(&udpHandle));
-	uv_ref(reinterpret_cast<uv_handle_t *>(&timerHandle));
 	connections++;
 	*putpsock = new UTPSocket(this, sock);
 	return 0;
@@ -108,16 +136,18 @@ void UTPContext::listen(int _backlog) {
 	if (state != STATE_BOUND) return;
 	backlog = _backlog;
 	if (backlog < 0) backlog = 0;
-	uv_ref(reinterpret_cast<uv_handle_t *>(&udpHandle));
-	uv_ref(reinterpret_cast<uv_handle_t *>(&timerHandle));
+	uvRef();
 	listening = true;
 	return;
 }
 
 void UTPContext::destroy() {
 	listening = false;
+	//std::cout << "try destroy" << std::endl;
+	uvUnref();
 	state = STATE_STOPPED;
 	if (connections == 0 && state == STATE_STOPPED) {
+		//std::cout << "destroy" << std::endl;
 		Nan::HandleScope scope;
 		v8::Local<v8::Function> onClose = Nan::Get(handle(), Nan::New("_onClose").ToLocalChecked()).ToLocalChecked().As<v8::Function>();
 		Nan::Callback(onClose).Call(0, 0);
@@ -227,6 +257,8 @@ void UTPContext::Init(v8::Local<v8::Object> exports, v8::Local<v8::Object> modul
 	Nan::SetPrototypeMethod(tpl, "connect", Connect);
 	Nan::SetPrototypeMethod(tpl, "close", Close);
 	Nan::SetPrototypeMethod(tpl, "state", State);
+	Nan::SetPrototypeMethod(tpl, "ref", jsRef);
+	Nan::SetPrototypeMethod(tpl, "unref", jsUnref);
 
 	exports->Set(Nan::New("UTPContext").ToLocalChecked(), tpl->GetFunction());
 	constructor.Reset(tpl->GetFunction());
@@ -290,6 +322,18 @@ NAN_METHOD(UTPContext::Close) {
 	Nan::HandleScope scope;
 	UTPContext *utpctx = Nan::ObjectWrap::Unwrap<UTPContext>(info.Holder());
 	utpctx->destroy();
+}
+
+NAN_METHOD(UTPContext::jsRef) {
+	Nan::HandleScope scope;
+	UTPContext *utpctx = Nan::ObjectWrap::Unwrap<UTPContext>(info.Holder());
+	utpctx->uvRef();
+}
+
+NAN_METHOD(UTPContext::jsUnref) {
+	Nan::HandleScope scope;
+	UTPContext *utpctx = Nan::ObjectWrap::Unwrap<UTPContext>(info.Holder());
+	utpctx->uvUnref();
 }
 
 }
