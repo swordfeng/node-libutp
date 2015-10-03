@@ -80,11 +80,23 @@ int UTPContext::bind(uint16_t port, string host) {
 		struct sockaddr_in sin;
 		struct sockaddr_in6 sin6;
 	} addr;
+	int family = AF_INET;
 	int errcode = uv_ip4_addr(host.c_str(), port, &addr.sin);
-	if (errcode < 0) errcode = uv_ip6_addr(host.c_str(), port, &addr.sin6);
+	if (errcode < 0) {
+		errcode = uv_ip6_addr(host.c_str(), port, &addr.sin6);
+		family = AF_INET6;
+	}
 	if (errcode < 0) return errcode;
 	errcode = uv_udp_bind(&udpHandle, &addr.saddr, UV_UDP_REUSEADDR);
 	if (errcode < 0) return errcode;
+
+#ifdef __linux__
+	uv_os_sock_t newsock = socket(family, SOCK_DGRAM, IPPROTO_UDP);
+	int on = 1;
+	assert(setsockopt(newsock, SOL_IP, IP_RECVERR, &on, sizeof(on)) == 0);
+	assert(uv_udp_open(&udpHandle, newsock >= 0));
+#endif
+
 	assert(uv_udp_recv_start(&udpHandle, static_cast<void (*)(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf)> (
 		[] (uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
 		    buf->base = new (nothrow) char[suggested_size];
@@ -208,6 +220,7 @@ uint64 UTPContext::onCallback(utp_callback_arguments *a) {
 
 void UTPContext::uvRecv(ssize_t len, const void *buf, const struct sockaddr *addr, unsigned flags) {
 	assert(len >= 0);
+	std::cout << "libuv recv len = " << len << std::endl;
 	if (!len && !addr) {
 		// no data
 		utp_issue_deferred_acks(ctx.get());

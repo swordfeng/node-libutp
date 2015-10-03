@@ -13,6 +13,11 @@
 #include <iostream>
 #include <new>
 
+#ifdef __linux__
+	#include <linux/errqueue.h>
+	#include <netinet/ip_icmp.h>
+#endif
+
 namespace nodeUTP {
 
 using std::string;
