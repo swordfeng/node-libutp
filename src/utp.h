@@ -100,9 +100,8 @@ private:
 
     bool refSelf;
 
-    void setChunk(const char *_chunk, size_t len, v8::Local<v8::Function> cb);
+    void setChunk(unique_ptr<char[]>&& _chunk, size_t len, v8::Local<v8::Function> cb);
     void write();
-    void read();
 
     void uvRef();
     void uvUnref();
@@ -111,12 +110,11 @@ private:
 	static NAN_METHOD(Write);
 	static NAN_METHOD(Close);
 	static NAN_METHOD(ForceTimedOut);
-	//static NAN_METHOD(Pause);
-	//static NAN_METHOD(Resume);
+	static NAN_METHOD(SlowSpeed);
+	static NAN_METHOD(NormalSpeed);
 	static NAN_METHOD(RemoteAddress);
 	static NAN_METHOD(jsRef);
 	static NAN_METHOD(jsUnref);
-
 public:
     static void Init(v8::Local<v8::Object> exports, v8::Local<v8::Object> module);
 	static UTPSocket *get(utp_socket *sock) {

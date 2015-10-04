@@ -51,8 +51,8 @@ void UTPSocket::Init(v8::Local<v8::Object> exports, v8::Local<v8::Object> module
 	Nan::SetPrototypeMethod(tpl, "close", Close);
 	Nan::SetPrototypeMethod(tpl, "forceTimedOut", ForceTimedOut);
 	Nan::SetPrototypeMethod(tpl, "remoteAddress", RemoteAddress);
-	//Nan::SetPrototypeMethod(tpl, "pause", Pause);
-	//Nan::SetPrototypeMethod(tpl, "resume", Resume);
+	Nan::SetPrototypeMethod(tpl, "slow", SlowSpeed);
+	Nan::SetPrototypeMethod(tpl, "normal", NormalSpeed);
 	Nan::SetPrototypeMethod(tpl, "ref", jsRef);
 	Nan::SetPrototypeMethod(tpl, "unref", jsUnref);
 
@@ -71,7 +71,11 @@ NAN_METHOD(UTPSocket::Write) {
 	v8::Local<v8::Object> buf = info[0].As<v8::Object>();
 	v8::Local<v8::Function> cb = info[1].As<v8::Function>();
 	UTPSocket *utpsock = get(info.Holder());
-	utpsock->setChunk(node::Buffer::Data(buf), node::Buffer::Length(buf), cb);
+	const char *chunk = node::Buffer::Data(buf);
+	size_t len = node::Buffer::Length(buf);
+	unique_ptr<char[]> newchunk(new char[len]);
+	std::copy(chunk, chunk + len, newchunk.get());
+	utpsock->setChunk(std::move(newchunk), len, cb);
 	utpsock->write();
 }
 
@@ -86,6 +90,18 @@ NAN_METHOD(UTPSocket::ForceTimedOut) {
 	Nan::HandleScope scope;
 	UTPSocket *utpsock = get(info.Holder());
 	utpsock->onError(UTP_ETIMEDOUT);
+}
+
+NAN_METHOD(UTPSocket::SlowSpeed) {
+	Nan::HandleScope scope;
+	UTPSocket *utpsock = get(info.Holder());
+	utp_setsockopt(utpsock->sock, UTP_RCVBUF, 4096);
+}
+
+NAN_METHOD(UTPSocket::NormalSpeed) {
+	Nan::HandleScope scope;
+	UTPSocket *utpsock = get(info.Holder());
+	utp_setsockopt(utpsock->sock, UTP_RCVBUF, 1048576);
 }
 
 NAN_METHOD(UTPSocket::RemoteAddress) {
@@ -141,25 +157,9 @@ NAN_METHOD(UTPSocket::CleanUp) {
 	activeSockets.empty();
 }
 
-/*
-NAN_METHOD(UTPSocket::Pause) {
-	Nan::HandleScope scope;
-	UTPSocket *utpsock = get(info.Holder());
-	utpsock->paused = true;
-}
-
-NAN_METHOD(UTPSocket::Resume) {
-	Nan::HandleScope scope;
-	UTPSocket *utpsock = get(info.Holder());
-	utpsock->paused = false;
-	utpsock->read();
-}
-*/
-
-void UTPSocket::setChunk(const char *_chunk, size_t len, v8::Local<v8::Function> cb) {
+void UTPSocket::setChunk(unique_ptr<char[]>&& _chunk, size_t len, v8::Local<v8::Function> cb) {
 	assert(!chunk.get());
-	chunk.reset(new char[len]);
-	std::copy(_chunk, _chunk + len, chunk.get());
+	chunk = std::move(_chunk);
 	chunkLength = len;
 	chunkOffset = 0;
 	writeCb.SetFunction(cb);
@@ -189,20 +189,11 @@ void UTPSocket::onConnect() {
 	write();
 }
 
-void UTPSocket::read() {
-	if (!sock || !readBuf.get()) return;
-	v8::Local<v8::Value> argv[] = { Nan::CopyBuffer(readBuf.get(), readLen).ToLocalChecked() };
-	Nan::Callback(handle()->Get(Nan::New("_onRead").ToLocalChecked()).As<v8::Function>()).Call(1, argv);
-	utp_read_drained(sock);
-}
-
 void UTPSocket::onRead(const void *_buf, size_t len) {
 	Nan::HandleScope scope;
-	readBuf.reset(new char[len]);
-	const char *buf = static_cast<const char *>(_buf);
-	std::copy(buf, buf + len, readBuf.get());
-	readLen = len;
-	read();
+	utp_read_drained(sock);
+	v8::Local<v8::Value> argv[] = { Nan::CopyBuffer(static_cast<const char *>(_buf), len).ToLocalChecked() };
+	Nan::Callback(handle()->Get(Nan::New("_onRead").ToLocalChecked()).As<v8::Function>()).Call(1, argv);
 }
 
 void UTPSocket::onWritable() {

@@ -28,17 +28,15 @@ refSelf(false)
 			return utpctx->onCallback(a);
 		});
 	}
-
-#ifdef _DEBUG
+/*
 	utp_context_set_option(ctx.get(), UTP_LOG_NORMAL, 1);
 	utp_context_set_option(ctx.get(), UTP_LOG_MTU,    1);
 	utp_context_set_option(ctx.get(), UTP_LOG_DEBUG,  1);
 	utp_set_callback(ctx.get(), UTP_LOG, [] (utp_callback_arguments *a) -> uint64 {
-		//std::cout << a->buf << std::endl;
+		std::cout << a->buf << std::endl;
 		return 0;
 	});
-#endif
-
+*/
 }
 
 UTPContext::~UTPContext() {
@@ -213,7 +211,7 @@ uint64 UTPContext::onCallback(utp_callback_arguments *a) {
 void UTPContext::uvRecv(ssize_t len, const void *buf, const struct sockaddr *addr, unsigned flags) {
 	assert(len >= 0);
 	if (!len && !addr) {
-		// no data
+		// no more data
 		utp_issue_deferred_acks(ctx.get());
 	} else {
 		size_t addrlen = addr->sa_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
@@ -229,9 +227,12 @@ uint64 UTPContext::sendTo(const void *buf, size_t len, const struct sockaddr *ad
 	uv_buf_t uvbuf;
 	uvbuf.base = tmpbuf.get();
 	uvbuf.len = len;
+	/*
 	assert(uv_udp_send(new uv_udp_send_t, &udpHandle, &uvbuf, 1, addr, [] (uv_udp_send_t *req, int status) {
+		assert(status == 0);
 		delete req;
-	}) >= 0);
+	}) >= 0);*/
+	uv_udp_try_send(&udpHandle, &uvbuf, 1, addr);
 	return 0;
 }
 
