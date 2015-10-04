@@ -227,12 +227,10 @@ uint64 UTPContext::sendTo(const void *buf, size_t len, const struct sockaddr *ad
 	uv_buf_t uvbuf;
 	uvbuf.base = tmpbuf.get();
 	uvbuf.len = len;
-	/*
+
 	assert(uv_udp_send(new uv_udp_send_t, &udpHandle, &uvbuf, 1, addr, [] (uv_udp_send_t *req, int status) {
-		assert(status == 0);
 		delete req;
-	}) >= 0);*/
-	uv_udp_try_send(&udpHandle, &uvbuf, 1, addr);
+	}) >= 0);
 	return 0;
 }
 
