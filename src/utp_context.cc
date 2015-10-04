@@ -228,9 +228,11 @@ uint64 UTPContext::sendTo(const void *buf, size_t len, const struct sockaddr *ad
 	uvbuf.base = tmpbuf.get();
 	uvbuf.len = len;
 
-	assert(uv_udp_send(new uv_udp_send_t, &udpHandle, &uvbuf, 1, addr, [] (uv_udp_send_t *req, int status) {
-		delete req;
-	}) >= 0);
+	// workaround but uv_udp_send is very very very slow but I don't know why
+	static uv_udp_send_t req;
+	if (uv_udp_try_send(&udpHandle, &uvbuf, 1, addr) < 0) {
+		assert(uv_udp_send(&req, &udpHandle, &uvbuf, 1, addr, [] (uv_udp_send_t *req, int status) {}) >= 0);
+	}
 	return 0;
 }
 
