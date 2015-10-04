@@ -240,6 +240,10 @@ void UTPSocket::onDestroy() {
 	if (!sock) return;
 	Nan::HandleScope scope;
 	Nan::Callback(handle()->Get(Nan::New("_onDestroy").ToLocalChecked()).As<v8::Function>()).Call(0, 0);
+	if (chunk.get()) {
+		v8::Local<v8::Value> argv[] = {Nan::Error("This socket is closed.")};
+		writeCb.Call(1, argv);
+	}
 	sock = nullptr;
 	uvUnref();
 	Unref();
