@@ -1,6 +1,15 @@
+extern "C" {
 #include <utp.h>
+#ifndef __SSIZE_T__
 #define __SSIZE_T__ // dulplicate definition hack
+#define DEF__SSIZE_T__
+#endif
 #include <uv.h>
+#ifdef DEF__SSIZE_T__
+#undef __SSIZE_T__ // dulplicate definition hack
+#undef DEF__SSIZE_T__
+#endif
+}
 #include <node.h>
 #include <node_object_wrap.h>
 #include <nan.h>

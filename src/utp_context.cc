@@ -222,7 +222,32 @@ void UTPContext::uvRecv(ssize_t len, const void *buf, const struct sockaddr *add
 	} else {
 		size_t addrlen = addr->sa_family == AF_INET ? sizeof(struct sockaddr_in) : sizeof(struct sockaddr_in6);
 		if (!utp_process_udp(ctx.get(), static_cast<const byte *>(buf), len, addr, addrlen)) {
+			Nan::HandleScope scope;
 			// printf("UDP packet not handled by UTP.  Ignoring.\n");
+			v8::Local<v8::Function> onConn = Nan::Get(handle(), Nan::New("_onUnrecognizedMessage").ToLocalChecked()).ToLocalChecked().As<v8::Function>();
+
+			int assertionResult;
+			char address[50];
+			v8::Local<v8::Object> rinfo = Nan::New<v8::Object>();
+			assert(addr->sa_family == AF_INET || addr->sa_family == AF_INET6);
+			if (addr->sa_family == AF_INET) {
+				// ipv4
+				assertionResult = uv_ip4_name(reinterpret_cast<const sockaddr_in *>(addr), address, 50);
+				assert(assertionResult >= 0);
+				rinfo->Set(Nan::New("address").ToLocalChecked(), Nan::New(address).ToLocalChecked());
+				rinfo->Set(Nan::New("family").ToLocalChecked(), Nan::New("IPv4").ToLocalChecked());
+				rinfo->Set(Nan::New("port").ToLocalChecked(), Nan::New<v8::Uint32>(ntohs(reinterpret_cast<const sockaddr_in *>(addr)->sin_port)));
+			} else {
+				// ipv6
+				assertionResult = uv_ip6_name(reinterpret_cast<const sockaddr_in6 *>(addr), address, 50);
+				assert(assertionResult >= 0);
+				rinfo->Set(Nan::New("address").ToLocalChecked(), Nan::New(address).ToLocalChecked());
+				rinfo->Set(Nan::New("family").ToLocalChecked(), Nan::New("IPv6").ToLocalChecked());
+				rinfo->Set(Nan::New("port").ToLocalChecked(), Nan::New<v8::Uint32>(ntohs(reinterpret_cast<const sockaddr_in6 *>(addr)->sin6_port)));
+			}
+
+			v8::Local<v8::Value> argv[2] = { Nan::CopyBuffer(static_cast<const char *>(buf), len).ToLocalChecked(), rinfo };
+			Nan::Callback(onConn).Call(1, argv);
 		}
 	}
 }
