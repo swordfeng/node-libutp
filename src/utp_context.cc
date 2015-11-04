@@ -15,8 +15,11 @@ pendingConnections(0),
 refCount(0),
 refSelf(false)
 {
-	assert(uv_udp_init(uv_default_loop(), &udpHandle) >= 0);
-	assert(uv_timer_init(uv_default_loop(), &timerHandle) >= 0);
+	int assertionResult;
+	assertionResult = uv_udp_init(uv_default_loop(), &udpHandle);
+	assert(assertionResult >= 0);
+	assertionResult = uv_timer_init(uv_default_loop(), &timerHandle);
+	assert(assertionResult >= 0);
 
 	utp_context_set_userdata(ctx.get(), this);
 	udpHandle.data = this;
@@ -84,7 +87,8 @@ int UTPContext::bind(uint16_t port, string host) {
 	if (errcode < 0) return errcode;
 	errcode = uv_udp_bind(&udpHandle, &addr.saddr, UV_UDP_REUSEADDR);
 	if (errcode < 0) return errcode;
-	assert(uv_udp_recv_start(&udpHandle, static_cast<void (*)(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf)> (
+	int assertionResult;
+	assertionResult = uv_udp_recv_start(&udpHandle, static_cast<void (*)(uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf)> (
 		[] (uv_handle_t *handle, size_t suggested_size, uv_buf_t *buf) {
 		    buf->base = new (nothrow) char[suggested_size];
 			assert(buf->base);
@@ -96,12 +100,14 @@ int UTPContext::bind(uint16_t port, string host) {
 		utpctx->uvRecv(nread, buf->base, addr, flags);
 		delete[] buf->base;
 		utp_check_timeouts(utpctx->ctx.get());
-	}) == 0);
-	assert(uv_timer_start(&timerHandle, static_cast<void (*)(uv_timer_t *handle)> ([] (uv_timer_t *handle) -> void {
+	});
+	assert(assertionResult >= 0);
+	assertionResult = uv_timer_start(&timerHandle, static_cast<void (*)(uv_timer_t *handle)> ([] (uv_timer_t *handle) -> void {
 		UTPContext *utpctx = static_cast<UTPContext *>(handle->data);
 		if (!utpctx->ctx.get()) return;
 		utp_check_timeouts(utpctx->ctx.get());
-	}), 0, 500) >= 0);
+	}), 0, 500);
+	assert(assertionResult >= 0);
 	uvUnref();
 	Ref();
 	state = STATE_BOUND;
@@ -231,7 +237,9 @@ uint64 UTPContext::sendTo(const void *buf, size_t len, const struct sockaddr *ad
 	// workaround but uv_udp_send is very very very slow but I don't know why
 	static uv_udp_send_t req;
 	if (uv_udp_try_send(&udpHandle, &uvbuf, 1, addr) < 0) {
-		assert(uv_udp_send(&req, &udpHandle, &uvbuf, 1, addr, [] (uv_udp_send_t *req, int status) {}) >= 0);
+		int assertionResult;
+		assertionResult = uv_udp_send(&req, &udpHandle, &uvbuf, 1, addr, [] (uv_udp_send_t *req, int status) {});
+		assert(assertionResult >= 0);
 	}
 	return 0;
 }
@@ -297,19 +305,23 @@ NAN_METHOD(UTPContext::Address) {
 			struct sockaddr_in6 sin6;
 		} addr;
 		int len = sizeof(addr);
-		assert(uv_udp_getsockname(&utpctx->udpHandle, &addr.saddr, &len) >= 0);
+		int assertionResult;
+		assertionResult = uv_udp_getsockname(&utpctx->udpHandle, &addr.saddr, &len);
+		assert(assertionResult >= 0);
 		char address[50];
 		v8::Local<v8::Object> res = Nan::New<v8::Object>();
 		assert(addr.saddr.sa_family == AF_INET || addr.saddr.sa_family == AF_INET6);
 		if (addr.saddr.sa_family == AF_INET) {
 			// ipv4
-			assert(uv_ip4_name(&addr.sin, address, 50) >= 0);
+			assertionResult = uv_ip4_name(&addr.sin, address, 50);
+			assert(assertionResult >= 0);
 			res->Set(Nan::New("address").ToLocalChecked(), Nan::New(address).ToLocalChecked());
 			res->Set(Nan::New("family").ToLocalChecked(), Nan::New("IPv4").ToLocalChecked());
 			res->Set(Nan::New("port").ToLocalChecked(), Nan::New<v8::Uint32>(ntohs(addr.sin.sin_port)));
 		} else {
 			// ipv6
-			assert(uv_ip6_name(&addr.sin6, address, 50) >= 0);
+			assertionResult = uv_ip6_name(&addr.sin6, address, 50);
+			assert(assertionResult >= 0);
 			res->Set(Nan::New("address").ToLocalChecked(), Nan::New(address).ToLocalChecked());
 			res->Set(Nan::New("family").ToLocalChecked(), Nan::New("IPv6").ToLocalChecked());
 			res->Set(Nan::New("port").ToLocalChecked(), Nan::New<v8::Uint32>(ntohs(addr.sin6.sin6_port)));

@@ -116,19 +116,23 @@ NAN_METHOD(UTPSocket::RemoteAddress) {
 			struct sockaddr_in6 sin6;
 		} addr;
 		socklen_t len = sizeof(addr);
-		assert(utp_getpeername(utpsock->sock, &addr.saddr, &len) >= 0);
+		int assertionResult;
+		assertionResult = utp_getpeername(utpsock->sock, &addr.saddr, &len);
+		assert(assertionResult >= 0);
 		char address[50];
 		v8::Local<v8::Object> res = Nan::New<v8::Object>();
 		assert(addr.saddr.sa_family == AF_INET || addr.saddr.sa_family == AF_INET6);
 		if (addr.saddr.sa_family == AF_INET) {
 			// ipv4
-			assert(uv_ip4_name(&addr.sin, address, 50) >= 0);
+			assertionResult = uv_ip4_name(&addr.sin, address, 50);
+			assert(assertionResult >= 0);
 			res->Set(Nan::New("address").ToLocalChecked(), Nan::New(address).ToLocalChecked());
 			res->Set(Nan::New("family").ToLocalChecked(), Nan::New("IPv4").ToLocalChecked());
 			res->Set(Nan::New("port").ToLocalChecked(), Nan::New<v8::Uint32>(ntohs(addr.sin.sin_port)));
 		} else {
 			// ipv6
-			assert(uv_ip6_name(&addr.sin6, address, 50) >= 0);
+			assertionResult = uv_ip6_name(&addr.sin6, address, 50);
+			assert(assertionResult >= 0);
 			res->Set(Nan::New("address").ToLocalChecked(), Nan::New(address).ToLocalChecked());
 			res->Set(Nan::New("family").ToLocalChecked(), Nan::New("IPv6").ToLocalChecked());
 			res->Set(Nan::New("port").ToLocalChecked(), Nan::New<v8::Uint32>(ntohs(addr.sin6.sin6_port)));
