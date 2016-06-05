@@ -190,7 +190,7 @@ struct SizableCircularBuffer {
 	// This is the elements that the circular buffer points to
 	void **elements;
 
-	void *get(size_t i) { assert(elements); return elements ? elements[i & mask] : NULL; }
+	void *get(size_t i) const { assert(elements); return elements ? elements[i & mask] : NULL; }
 	void put(size_t i, void *data) { assert(elements); elements[i&mask] = data; }
 
 	void grow(size_t item, size_t index);
@@ -553,15 +553,20 @@ struct UTPSocket {
 		va_list va;
 		char buf[4096], buf2[4096];
 
+		// don't bother with vsnprintf() etc calls if we're not going to log.
+		if (!ctx->would_log(level)) {
+			return;
+		}
+
 		va_start(va, fmt);
 		vsnprintf(buf, 4096, fmt, va);
 		va_end(va);
 		buf[4095] = '\0';
 
-		snprintf(buf2, 4096, "%p %s %06d %s", this, addrfmt(addr, addrbuf), conn_id_recv, buf);
+		snprintf(buf2, 4096, "%p %s %06u %s", this, addrfmt(addr, addrbuf), conn_id_recv, buf);
 		buf2[4095] = '\0';
 
-		ctx->log(level, this, buf2);
+		ctx->log_unchecked(this, buf2);
 	}
 
 	void schedule_ack();
@@ -1903,10 +1908,21 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 
 	// if we get the same ack_nr as in the last packet
 	// increase the duplicate_ack counter, otherwise reset
-	// it to 0
+	// it to 0.
+	// It's important to only count ACKs in ST_STATE packets. Any other
+	// packet (primarily ST_DATA) is likely to have been sent because of the
+	// other end having new outgoing data, not in response to incoming data.
+	// For instance, if we're receiving a steady stream of payload with no
+	// outgoing data, and we suddently have a few bytes of payload to send (say,
+	// a bittorrent HAVE message), we're very likely to see 3 duplicate ACKs
+	// immediately after sending our payload packet. This effectively disables
+	// the fast-resend on duplicate-ack logic for bi-directional connections
+	// (except in the case of a selective ACK). This is in line with BSD4.4 TCP
+	// implementation.
 	if (conn->cur_window_packets > 0) {
 		if (pk_ack_nr == ((conn->seq_nr - conn->cur_window_packets - 1) & ACK_NR_MASK)
-			&& conn->cur_window_packets > 0) {
+			&& conn->cur_window_packets > 0
+			&& pk_flags == ST_STATE) {
 			++conn->duplicate_ack;
 			if (conn->duplicate_ack == DUPLICATE_ACKS_BEFORE_RESEND && conn->mtu_probe_seq) {
 				// It's likely that the probe was rejected due to its size, but we haven't got an
@@ -1998,13 +2014,12 @@ size_t utp_process_incoming(UTPSocket *conn, const byte *packet, size_t len, boo
 		}
 	}
 
-  	const uint32 actual_delay = (uint32(pf1->reply_micro)==INT_MAX?0:uint32(pf1->reply_micro));
+	const uint32 actual_delay = (uint32(pf1->reply_micro)==INT_MAX?0:uint32(pf1->reply_micro));
 
 	// if the actual delay is 0, it means the other end
 	// hasn't received a sample from us yet, and doesn't
 	// know what it is. We can't update out history unless
 	// we have a true measured sample
-	prev_delay_base = conn->our_hist.delay_base;
 	if (actual_delay != 0) {
 		conn->our_hist.add_sample(actual_delay, conn->ctx->current_ms);
 
@@ -3379,12 +3394,18 @@ void* utp_get_userdata(utp_socket *socket) {
 
 void struct_utp_context::log(int level, utp_socket *socket, char const *fmt, ...)
 {
-	switch (level) {
-		case UTP_LOG_NORMAL:	if (!log_normal) return;
-		case UTP_LOG_MTU:		if (!log_mtu)    return;
-		case UTP_LOG_DEBUG:		if (!log_debug)  return;
+	if (!would_log(level)) {
+		return;
 	}
 
+	va_list va;
+	va_start(va, fmt);
+	log_unchecked(socket, fmt, va);
+	va_end(va);
+}
+
+void struct_utp_context::log_unchecked(utp_socket *socket, char const *fmt, ...)
+{
 	va_list va;
 	char buf[4096];
 
@@ -3394,6 +3415,14 @@ void struct_utp_context::log(int level, utp_socket *socket, char const *fmt, ...
 	va_end(va);
 
 	utp_call_log(this, socket, (const byte *)buf);
+}
+
+inline bool struct_utp_context::would_log(int level)
+{
+	if (level == UTP_LOG_NORMAL) return log_normal;
+	if (level == UTP_LOG_MTU) return log_mtu;
+	if (level == UTP_LOG_DEBUG) return log_debug;
+	return true;
 }
 
 utp_socket_stats* utp_get_stats(utp_socket *socket)
